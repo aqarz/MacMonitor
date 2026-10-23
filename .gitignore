@@ -1,0 +1,5 @@
+.build/
+MacMonitor.app/
+.swiftpm/
+.DS_Store
+*.tar.gz
