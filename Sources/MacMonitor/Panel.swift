@@ -9,9 +9,21 @@ final class DesktopPanel: NSPanel {
     private var hosting: NSHostingView<MonitorView>?
     private var layoutSub: AnyCancellable?
     private let sampler: Sampler
+    #if !APPSTORE
     private let remotes: RemoteManager
+    #endif
     private var lastLayoutKey: [Int] = []
 
+    #if APPSTORE
+    init(sampler: Sampler) {
+        self.sampler = sampler
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 240, height: 260),
+                   styleMask: [.borderless, .nonactivatingPanel],
+                   backing: .buffered,
+                   defer: false)
+        setUp()
+    }
+    #else
     init(sampler: Sampler, remotes: RemoteManager) {
         self.sampler = sampler
         self.remotes = remotes
@@ -19,6 +31,11 @@ final class DesktopPanel: NSPanel {
                    styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered,
                    defer: false)
+        setUp()
+    }
+    #endif
+
+    private func setUp() {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
@@ -40,7 +57,11 @@ final class DesktopPanel: NSPanel {
         effect.state = .active                   // stay vibrant even though the app is never active
         effect.maskImage = DesktopPanel.roundedMask(radius: radius)
 
+        #if APPSTORE
+        let hosting = NSHostingView(rootView: MonitorView(sampler: sampler))
+        #else
         let hosting = NSHostingView(rootView: MonitorView(sampler: sampler, remotes: remotes))
+        #endif
         self.hosting = hosting
         lastLayoutKey = currentLayoutKey()
         let size = Self.fittingSize(for: hosting, estimate: estimatedMinHeight())
@@ -62,8 +83,13 @@ final class DesktopPanel: NSPanel {
         // Every trigger just re-checks one combined layout key, so per-tick cost is nil.
         let localVolumes = sampler.$snapshot.map { $0.volumes.count }.removeDuplicates()
             .map { _ in () }.eraseToAnyPublisher()
+        #if APPSTORE
+        let layoutTriggers = localVolumes
+        #else
         let serverList = remotes.$servers.map { _ in () }.eraseToAnyPublisher()
-        layoutSub = Publishers.Merge3(localVolumes, serverList, remotes.layoutChanged.eraseToAnyPublisher())
+        let layoutTriggers = Publishers.Merge3(localVolumes, serverList, remotes.layoutChanged.eraseToAnyPublisher())
+        #endif
+        layoutSub = layoutTriggers
             .sink { [weak self] _ in
                 // @Published fires in willSet: look at the new state on the next main-queue turn.
                 DispatchQueue.main.async { self?.layoutMaybeChanged() }
@@ -83,17 +109,23 @@ final class DesktopPanel: NSPanel {
     /// height normally wins.
     private func estimatedMinHeight() -> CGFloat {
         var h = CGFloat(300 + 50 * max(sampler.snapshot.volumes.count, 1))
+        #if !APPSTORE
         for server in remotes.servers {
             h += 45
             let showsMetrics: Bool
             if case .error = server.status { showsMetrics = false } else { showsMetrics = server.snapshot.hasData }
             h += showsMetrics ? CGFloat(80 + 26 * server.snapshot.disks.count) : 14
         }
+        #endif
         return h
     }
 
     private func currentLayoutKey() -> [Int] {
-        [sampler.snapshot.volumes.count] + remotes.layoutKey
+        #if APPSTORE
+        return [sampler.snapshot.volumes.count]
+        #else
+        return [sampler.snapshot.volumes.count] + remotes.layoutKey
+        #endif
     }
 
     private func layoutMaybeChanged() {
@@ -232,7 +264,9 @@ extension Color {
 
 struct MonitorView: View {
     @ObservedObject var sampler: Sampler
+    #if !APPSTORE
     @ObservedObject var remotes: RemoteManager
+    #endif
     /// ImageRenderer can't draw NSVisualEffectView materials; use a flat translucent fill instead.
     var snapshotMode: Bool = false
 
@@ -280,9 +314,11 @@ struct MonitorView: View {
             .padding(.bottom, 16)
 
             // One compact section per SSH server (each observes only its own sampler).
+            #if !APPSTORE
             ForEach(remotes.servers) { server in
                 RemoteSection(server: server)
             }
+            #endif
         }
         .fixedSize(horizontal: false, vertical: true)
         .frame(width: Theme.panelWidth, alignment: .top)
@@ -412,6 +448,7 @@ enum LocalHost {
     static let name: String = Host.current().localizedName ?? "This Mac"
 }
 
+#if !APPSTORE
 struct RemoteSection: View {
     @ObservedObject var server: RemoteSampler
 
@@ -523,6 +560,7 @@ struct ServerHeader: View {
         }
     }
 }
+#endif
 
 /// One-line meter: icon + title, optional faded detail, value, then a thin bar.
 struct CompactMeter: View {
@@ -729,17 +767,28 @@ struct BarsShape: Shape {
 @MainActor
 enum SnapshotExporter {
     /// If MM_SNAPSHOT names a file, render the panel to a PNG there after ~3 s, then quit.
+    #if APPSTORE
+    static func scheduleIfRequested(sampler: Sampler) {
+        guard let path = ProcessInfo.processInfo.environment["MM_SNAPSHOT"], !path.isEmpty else { return }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)   // let CPU / network samples settle
+            render(MonitorView(sampler: sampler, snapshotMode: true), to: path)
+            NSApp.terminate(nil)
+        }
+    }
+    #else
     static func scheduleIfRequested(sampler: Sampler, remotes: RemoteManager) {
         guard let path = ProcessInfo.processInfo.environment["MM_SNAPSHOT"], !path.isEmpty else { return }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 3_000_000_000)   // let CPU / network samples settle
-            render(sampler: sampler, remotes: remotes, to: path)
+            render(MonitorView(sampler: sampler, remotes: remotes, snapshotMode: true), to: path)
             NSApp.terminate(nil)
         }
     }
+    #endif
 
-    private static func render(sampler: Sampler, remotes: RemoteManager, to path: String) {
-        let preview = MonitorView(sampler: sampler, remotes: remotes, snapshotMode: true)
+    private static func render(_ view: MonitorView, to path: String) {
+        let preview = view
             .fixedSize()
             .shadow(color: Color.black.opacity(0.18), radius: 14, x: 0, y: 6)
             .padding(32)

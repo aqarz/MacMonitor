@@ -81,3 +81,21 @@ If it fails, an alert explains why.
 - The app runs as an accessory app (`LSUIElement`), so it has no Dock icon. Quit it from the menu bar item.
 - If Gatekeeper complains after you copy the app from another machine, run `xattr -dr com.apple.quarantine MacMonitor.app`.
 - Reset the saved panel position: `defaults delete com.tweetso.macmonitor panelOrigin`.
+
+## Mac App Store edition (no SSH)
+The App Store build is compiled with the `APPSTORE` Swift flag. That flag compiles out the whole
+remote-server feature (`RemoteSampler.swift`, `RemoteParse.swift`, the **Add Server…** / **Servers**
+menu items, and the server sections in the panel), because App Sandbox doesn't allow launching
+`/usr/bin/ssh`. The default SwiftPM / `build_app.sh` build is still the full edition.
+
+The Xcode project is generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen) from `AppStore/project.yml`:
+App Sandbox (no other entitlements), Hardened Runtime, `LSUIElement`, category Utilities, an app icon asset,
+and a privacy manifest (UserDefaults CA92.1, disk space 85F4.1, system boot time 35F9.1).
+```bash
+brew install xcodegen
+cd AppStore
+xcodegen generate                    # -> MacMonitorAppStore.xcodeproj
+./archive_upload.sh                  # archive + upload to App Store Connect (team NWPTRYJ9FL)
+EXPORT_ONLY=1 ./archive_upload.sh    # archive + export locally, no upload
+```
+Quick check without Xcode: `swift build -c release -Xswiftc -DAPPSTORE`.

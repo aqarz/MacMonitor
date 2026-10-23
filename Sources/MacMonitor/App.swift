@@ -23,23 +23,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private var sampler: Sampler!
+    #if !APPSTORE
     private var remotes: RemoteManager!
+    #endif
     private var panel: DesktopPanel!
     private var statusItem: NSStatusItem!
 
     private var showItem: NSMenuItem!
     private var lockItem: NSMenuItem!
     private var loginItem: NSMenuItem!
+    #if !APPSTORE
     private var serversItem: NSMenuItem!
+    #endif
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: [Keys.visible: true, Keys.locked: true])
 
         sampler = Sampler()
+        #if APPSTORE
+        panel = DesktopPanel(sampler: sampler)
+        #else
         // Snapshot debug mode shows a fake 'linux-server' instead of connecting over SSH.
         let snapshotMode = !(ProcessInfo.processInfo.environment["MM_SNAPSHOT"] ?? "").isEmpty
         remotes = RemoteManager(demo: snapshotMode)
         panel = DesktopPanel(sampler: sampler, remotes: remotes)
+        #endif
         panel.locked = UserDefaults.standard.bool(forKey: Keys.locked)
         if UserDefaults.standard.bool(forKey: Keys.visible) { panel.orderFront(nil) }
 
@@ -53,7 +61,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sampler.onTick = { [weak self] s in self?.updateStatusTitle(s) }
         updateStatusTitle(sampler.snapshot)
 
+        #if APPSTORE
+        SnapshotExporter.scheduleIfRequested(sampler: sampler)   // debug: MM_SNAPSHOT=/tmp/panel.png
+        #else
         SnapshotExporter.scheduleIfRequested(sampler: sampler, remotes: remotes)   // debug: MM_SNAPSHOT=/tmp/panel.png
+        #endif
     }
 
     private func updateStatusTitle(_ s: Snapshot) {
@@ -77,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.target = self
             menu.addItem(item)
         }
+        #if !APPSTORE
         menu.addItem(.separator())
         let add = NSMenuItem(title: "Add Server…", action: #selector(AppDelegate.addServer), keyEquivalent: "")
         add.target = self
@@ -84,6 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         serversItem = NSMenuItem(title: "Servers", action: nil, keyEquivalent: "")
         serversItem.submenu = NSMenu(title: "Servers")
         menu.addItem(serversItem)
+        #endif
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit MacMonitor", action: #selector(AppDelegate.quit), keyEquivalent: "q")
         quit.target = self
@@ -96,9 +110,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lockItem.title = panel.locked ? "Unlock Position" : "Lock Position"
         lockItem.isEnabled = panel.isVisible
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        #if !APPSTORE
         rebuildServersMenu()
+        #endif
     }
 
+    #if !APPSTORE
     func applicationWillTerminate(_ notification: Notification) {
         remotes?.stopAll()          // SIGTERM every ssh child so no sessions are left behind
     }
@@ -222,6 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         remotes.add(ServerConfig(name: name, host: host, user: user, port: port,
                                  identityFile: key.isEmpty ? nil : key))
     }
+    #endif
 
     @objc private func toggleVisible() {
         let show = !panel.isVisible

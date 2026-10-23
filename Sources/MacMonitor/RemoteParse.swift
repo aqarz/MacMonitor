@@ -1,3 +1,6 @@
+// Remote (SSH) server monitoring. Excluded from the Mac App Store edition (-D APPSTORE),
+// because App Sandbox forbids launching /usr/bin/ssh.
+#if !APPSTORE
 import Foundation
 
 // Pure Foundation code (no AppKit / SwiftUI) so it can be exercised on Linux as well.
@@ -358,3 +361,4 @@ struct RemoteMetrics {
         s.hasData = true
     }
 }
+#endif

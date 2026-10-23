@@ -1,3 +1,6 @@
+// Remote (SSH) server monitoring. Excluded from the Mac App Store edition (-D APPSTORE),
+// because App Sandbox forbids launching /usr/bin/ssh.
+#if !APPSTORE
 import Foundation
 import Combine
 
@@ -312,3 +315,4 @@ final class RemoteManager: ObservableObject {
         return RemoteSampler(demo: cfg, snapshot: s)
     }
 }
+#endif
